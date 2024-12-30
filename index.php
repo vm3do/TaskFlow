@@ -1,10 +1,33 @@
 <?php
+session_start();
 require_once 'config/database.php';
 require_once 'classes/TaskManager.php';
 
 $db = (new Database())->connect();
 $taskManager = new TaskManager($db);
-$tasks = $taskManager->getAllTasks();
+
+
+if (isset($_GET['logout'])) {
+    unset($_SESSION['current_user']);
+}
+
+if (!isset($_SESSION['current_user'])) {
+
+    $users = $taskManager->getAllUsers();
+    if (!empty($users)) {
+        $_SESSION['current_user'] = $users[0]['name'];
+    } else {
+        $taskManager->addUser('Default User');
+        $_SESSION['current_user'] = 'Default User';
+    }
+}
+
+$currentUser = $_SESSION['current_user'];
+
+$filterType = $_GET['filter'] ?? 'all';
+$tasks = ($filterType === 'my_tasks' && $_SESSION['current_user']) 
+    ? $taskManager->getTasksByUser($_SESSION['current_user'])
+    : $taskManager->getAllTasks();
 ?>
 
 <!DOCTYPE html>
@@ -13,75 +36,7 @@ $tasks = $taskManager->getAllTasks();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TaskFlow - Task Management</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f4f4f9;
-        }
-
-        header {
-            background-color: #4CAF50;
-            color: white;
-            padding: 1rem;
-            text-align: center;
-        }
-
-        main {
-            padding: 2rem;
-        }
-
-        .task-list, .task-form {
-            background: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        h2 {
-            color: #333;
-        }
-
-        .task {
-            border-bottom: 1px solid #ddd;
-            padding: 0.5rem 0;
-        }
-
-        .task:last-child {
-            border-bottom: none;
-        }
-
-        .btn {
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            cursor: pointer;
-            border-radius: 3px;
-        }
-
-        .btn:hover {
-            background-color: #45a049;
-        }
-
-        input, select {
-            width: 100%;
-            padding: 0.5rem;
-            margin: 0.5rem 0 1rem;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-        }
-
-        label {
-            font-weight: bold;
-        }
-
-        .form-group {
-            margin-bottom: 1rem;
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -89,23 +44,41 @@ $tasks = $taskManager->getAllTasks();
     <h1>TaskFlow - Task Management</h1>
 </header>
 
+<div id="notification" class="notification" style="display: none;">
+    <span id="notification-message"></span>
+    <button onclick="closeNotification()" class="close-btn">&times;</button>
+</div>
+
 <main>
-    <section class="task-list">
-        <h2>Task List</h2>
+
+    <div class="task-list">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h2>Task List</h2>
+            <select onchange="window.location.href='?filter=' + this.value">
+                <option value="all" <?= $filterType === 'all' ? 'selected' : '' ?>>All Tasks</option>
+                <option value="my_tasks" <?= $filterType === 'my_tasks' ? 'selected' : '' ?>>My Tasks</option>
+            </select>
+        </div>
+        
         <?php foreach ($tasks as $task): ?>
             <div class="task">
-                <p><strong>Title:</strong> <?= htmlspecialchars($task['title']) ?></p>
-                <p><strong>Type:</strong> <?= htmlspecialchars($task['type']) ?></p>
-                <p><strong>Status:</strong> <?= htmlspecialchars($task['status']) ?></p>
-                <p><strong>Assigned To:</strong> <?= htmlspecialchars($task['assigned_user']) ?></p>
-                <p><strong>Additional Info:</strong> <?= htmlspecialchars($task['additional_info']) ?></p>
+                <div class="task-header">
+                    <h3><?= htmlspecialchars($task['title']) ?></h3>
+                    <button class="btn-details" onclick="toggleDetails(this)">Show Details</button>
+                </div>
+                <div class="task-details" style="display: none;">
+                    <p><strong>Type:</strong> <?= htmlspecialchars($task['type']) ?></p>
+                    <p><strong>Status:</strong> <?= htmlspecialchars($task['status']) ?></p>
+                    <p><strong>Assigned To:</strong> <?= htmlspecialchars($task['assigned_user']) ?></p>
+                    <p><strong>Additional Info:</strong> <?= htmlspecialchars($task['additional_info']) ?></p>
+                </div>
             </div>
         <?php endforeach; ?>
-    </section>
+    </div>
 
     <section class="task-form">
         <h2>Create a Task</h2>
-        <form action="create_task.php" method="post">
+        <form id="taskForm" onsubmit="createTask(event)">
             <div class="form-group">
                 <label for="task-title">Task Title:</label>
                 <input type="text" id="task-title" name="task_title" required>
@@ -122,6 +95,14 @@ $tasks = $taskManager->getAllTasks();
             </div>
 
             <div class="form-group">
+                <label for="assignment-type">Assignment:</label>
+                <select id="assignment-type" onchange="toggleAssignmentField()" required>
+                    <option value="self">Assign to Myself (<?= htmlspecialchars($currentUser) ?>)</option>
+                    <option value="other">Assign to Someone Else</option>
+                </select>
+            </div>
+
+            <div class="form-group" id="assigned-user-group">
                 <label for="assigned-user">Assign To:</label>
                 <input type="text" id="assigned-user" name="assigned_user" required>
             </div>
@@ -140,6 +121,125 @@ $tasks = $taskManager->getAllTasks();
         </form>
     </section>
 </main>
+
+<script>
+async function createTask(event) {
+    event.preventDefault();
+    const form = document.getElementById('taskForm');
+    const formData = new FormData(form);
+
+    try {
+        const response = await fetch('create_task.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        showNotification(result.message, result.status);
+        
+        if (result.status === 'success') {
+            
+            location.reload();
+
+            form.reset();
+        }
+    } catch (error) {
+        showNotification('Error creating task: ' + error.message, 'error');
+    }
+}
+
+function showNotification(message, type) {
+    const notification = document.getElementById('notification');
+    const messageElement = document.getElementById('notification-message');
+    
+    notification.className = 'notification ' + type;
+    messageElement.textContent = message;
+    notification.style.display = 'flex';
+    
+    setTimeout(() => {
+        closeNotification();
+    }, 5000);
+}
+
+function closeNotification() {
+    const notification = document.getElementById('notification');
+    notification.style.display = 'none';
+}
+
+function toggleDetails(button) {
+    const details = button.closest('.task').querySelector('.task-details');
+    const isHidden = details.style.display === 'none';
+    
+    details.style.display = isHidden ? 'block' : 'none';
+    button.textContent = isHidden ? 'Hide Details' : 'Show Details';
+}
+
+function toggleAssignmentField() {
+    const assignmentType = document.getElementById('assignment-type').value;
+    const assignedUserGroup = document.getElementById('assigned-user-group');
+    const assignedUserField = document.getElementById('assigned-user');
+    
+    if (assignmentType === 'self') {
+        const currentUser = '<?php echo $_SESSION['current_user']; ?>';
+        assignedUserField.value = currentUser;
+        assignedUserGroup.style.display = 'none';
+    } else {
+        assignedUserField.value = '';
+        assignedUserGroup.style.display = 'block';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    toggleAssignmentField();
+});
+
+async function addUser(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+
+    try {
+        const response = await fetch('add_user.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        showNotification(result.message, result.status);
+        
+        if (result.status === 'success') {
+            
+            location.reload();
+            form.reset();
+        }
+    } catch (error) {
+        showNotification('Error adding user: ' + error.message, 'error');
+    }
+}
+
+function switchUser(username) {
+    
+    fetch('switch_user.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'username=' + encodeURIComponent(username)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            location.reload();
+        } else {
+            showNotification('Error switching user', 'error');
+        }
+    })
+    .catch(error => {
+        showNotification('Error switching user: ' + error.message, 'error');
+    });
+}
+</script>
 
 </body>
 </html>

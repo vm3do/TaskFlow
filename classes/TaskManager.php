@@ -39,11 +39,43 @@ class TaskManager {
 
     
     public function getAllTasks() {
-        $sql = "SELECT * FROM tasks";
+        $sql = "SELECT * FROM tasks ORDER BY created_at DESC";
         $stmt = $this->conn->prepare($sql);
         $stmt->execute();
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function getTasksByUser($username) {
+        $sql = "SELECT * FROM tasks WHERE assigned_user = :username ORDER BY created_at DESC";
+        $stmt = $this->conn->prepare($sql);
+        $stmt->bindParam(':username', $username);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function getAllUsers() {
+        $sql = "SELECT * FROM users ORDER BY name ASC";
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function addUser($name) {
+        $sql = "INSERT INTO users (name) VALUES (:name)";
+        $stmt = $this->conn->prepare($sql);
+        $stmt->bindParam(':name', $name);
+        
+        try {
+            $stmt->execute();
+            return ['status' => 'success', 'message' => 'User added successfully'];
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) {
+                return ['status' => 'error', 'message' => 'User already exists'];
+            }
+            return ['status' => 'error', 'message' => 'Error adding user'];
+        }
     }
 
 }
