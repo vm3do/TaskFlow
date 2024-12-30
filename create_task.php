@@ -5,6 +5,8 @@ require_once 'classes/Bug.php';
 require_once 'classes/Feature.php';
 require_once 'classes/TaskManager.php';
 
+header('Content-Type: application/json');
+
 $db = (new Database())->connect();
 $taskManager = new TaskManager($db);
 
@@ -27,11 +29,11 @@ if ($type === 'Bug') {
 
 if ($task) {
     if ($taskManager->createTask($task)) {
-        echo "Task created successfully!";
+        echo json_encode(['status' => 'success', 'message' => 'Task created successfully!']);
     } else {
-        echo "Failed to create task.";
+        echo json_encode(['status' => 'error', 'message' => 'Failed to create task.']);
     }
 } else {
-    echo "Invalid task type!";
+    echo json_encode(['status' => 'error', 'message' => 'Invalid task type!']);
 }
 ?>
